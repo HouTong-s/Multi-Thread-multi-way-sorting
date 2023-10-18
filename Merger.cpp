@@ -3,10 +3,14 @@
 #include <fstream>
 #include <sstream>
 
-Merger::Merger() : mergeFileCount(0) {}
+Merger::Merger() : mergeFileCount(0), threadPool(std::thread::hardware_concurrency() * 2) {}
+
 
 std::vector<std::string> Merger::twoWayMerge(const std::vector<std::string>& tempFiles, const std::string& tempDir) {
     std::vector<std::string> mergedFiles;
+
+    std::mutex mutex; // 用于同步对mergedFiles的访问
+    
     size_t fileCount = tempFiles.size();
 
     for (size_t i = 0; i < fileCount; i += 2) {

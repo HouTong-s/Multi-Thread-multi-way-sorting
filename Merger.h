@@ -1,6 +1,10 @@
+#ifndef MERGER_H
+#define MERGER_H
+
 #include <string>
 #include <vector>
 #include <queue>
+#include"ThreadPool.h"
 
 class Merger {
 public:
@@ -14,6 +18,9 @@ public:
     void mergeToFinalOutput(const std::vector<std::string>& tempFiles, const std::string& outputFilename);
 
 private:
+
+    ThreadPool threadPool;
+
     int mergeFileCount;  // 用于生成临时归并文件名
 
     struct MergeElement {
@@ -26,3 +33,5 @@ private:
 
     std::string getNextMergeFileName(const std::string& tempDir);
 };
+
+#endif 

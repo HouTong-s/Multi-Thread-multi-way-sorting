@@ -1,4 +1,5 @@
 #include "Sorter.h"
+#include <mutex>
 #include <fstream>
 #include <algorithm>
 #include <sstream>
@@ -13,7 +14,14 @@ std::vector<int64_t> Sorter::sortData(const std::vector<int64_t>& data) {
 
 std::string Sorter::saveSortedData(const std::vector<int64_t>& data, const std::string& tempDir) {
     std::ostringstream oss;
-    oss << tempDir << "/temp_sorted_" << tempFileCount++ << ".dat";
+    size_t currentFileCount;
+    
+    {
+        std::unique_lock<std::mutex> lock(fileCountMutex);
+        currentFileCount = tempFileCount++;
+    }
+
+    oss << tempDir << "/temp_sorted_" << currentFileCount << ".dat";
     std::string tempFilename = oss.str();
     
     std::ofstream file(tempFilename, std::ios::binary | std::ios::out);

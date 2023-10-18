@@ -7,6 +7,10 @@ ThreadPool::ThreadPool(size_t threads) : stop(false) {
 }
 
 ThreadPool::~ThreadPool() {
+
+}
+
+void ThreadPool::shutdown() {
     stop = true;
     condition.notify_all();
     for(std::thread &worker: workers) {

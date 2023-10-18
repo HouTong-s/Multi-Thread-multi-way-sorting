@@ -1,3 +1,5 @@
+#ifndef SORTER_H
+#define SORTER_H
 #include <vector>
 #include <string>
 
@@ -14,4 +16,7 @@ public:
 
 private:
     int tempFileCount;  // 用于生成临时文件名
+    std::mutex fileCountMutex;
 };
+
+#endif

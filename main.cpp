@@ -32,29 +32,48 @@ int main(int argc, char* argv[]) {
 
     std::vector<std::string> tempFiles; // 存储所有临时排序文件的路径
 
+    std::mutex tempFilesMutex;
+
+    constexpr size_t maxTaskDataSize = 200 * 1024 * 1024 / sizeof(int64_t); // 200MB in terms of int64_t numbers
+
     // 对文件列表中的每个文件进行排序
     for (const auto& file : fileList) {
-        threadPool.enqueue([&, file]() {
-            size_t partitionSize = fileHandler.getPartitionSize(file);
-            size_t offset = 0;
-            std::vector<int64_t> data;
-            int i = 0;
-            
-            while ((data = fileHandler.readPartition(file, offset, partitionSize)).size() > 0) {
-                std::cout << file << ":" << i <<" DataNums:" << data.size() << std::endl;
-                std::vector<int64_t> sortedData = sorter.sortData(data);
-                std::string tempFilename = sorter.saveSortedData(sortedData, inputDirectory); // 临时文件保存在输入目录中
-                tempFiles.push_back(tempFilename);
+        size_t totalSize = std::filesystem::file_size(file) / sizeof(int64_t); // Total numbers in the file
+        size_t partitionSize = fileHandler.getPartitionSize(file);
+        size_t tasksForCurrentFile = (totalSize + maxTaskDataSize - 1) / maxTaskDataSize; // Ceiling division
 
-                i++;
+        for (size_t task = 0; task < tasksForCurrentFile; ++task) {
+            threadPool.enqueue([&, file, task]() {
+                size_t startOffset = task * maxTaskDataSize;
+                size_t endOffset = std::min((task+1) * maxTaskDataSize, totalSize);
+                size_t currentOffset = startOffset;
 
-                offset += partitionSize;
-            }
-        });
+                while (currentOffset < endOffset) {
+                    size_t currentTaskSize = std::min(partitionSize, endOffset - currentOffset);
+
+                    std::vector<int64_t> data = fileHandler.readPartition(file, currentOffset, currentTaskSize);
+                    if (data.empty()) {
+                        break; // No more data to read
+                    }
+
+                    std::cout << file << ": Task " << task << " Offset: " << currentOffset << " DataNums:" << data.size() << std::endl;
+                    
+                    std::vector<int64_t> sortedData = sorter.sortData(data);
+                    std::string tempFilename = sorter.saveSortedData(sortedData, inputDirectory);
+
+                    // This part should be synchronized since tempFiles is shared among threads
+                    std::unique_lock<std::mutex> lock(tempFilesMutex);
+                    tempFiles.push_back(tempFilename);
+
+                    currentOffset += currentTaskSize;
+                }
+            });
+        }
     }
 
+
     // 确保所有排序任务完成
-    threadPool.~ThreadPool();
+    threadPool.shutdown();
 
     // 归并所有临时文件
     Merger merger;

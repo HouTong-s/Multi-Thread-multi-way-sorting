@@ -1,3 +1,6 @@
+#ifndef FILEHANDLER_H
+#define FILEHANDLER_H
+
 #include <string>
 #include <vector>
 
@@ -24,3 +27,5 @@ public:
 private:
     std::string directory;
 };
+
+#endif
