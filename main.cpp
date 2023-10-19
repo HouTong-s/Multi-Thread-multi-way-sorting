@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
+#include <atomic>
 
 #include "ThreadPool.h"
 #include "FileHandler.h"
@@ -10,7 +11,7 @@
 
 
 int main(int argc, char* argv[]) {
-    try {
+
     if (argc < 3) {
         std::cout << "Usage: " << argv[0] << " <input directory> <output file>" << std::endl;
         return 1;
@@ -45,6 +46,7 @@ int main(int argc, char* argv[]) {
 
         for (size_t task = 0; task < tasksForCurrentFile; ++task) {
             threadPool.enqueue([&, file, task]() {
+                try{
                 size_t startOffset = task * maxTaskDataSize;
                 size_t endOffset = std::min((task+1) * maxTaskDataSize, totalSize);
                 size_t currentOffset = startOffset;
@@ -60,7 +62,7 @@ int main(int argc, char* argv[]) {
                     std::cout << file << ": Task " << task << " Thread id: " << std::this_thread::get_id() << " DataNums:" << data.size() << std::endl;
                     
                     std::vector<int64_t> sortedData = sorter.sortData(data);
-                    std::string tempFilename = sorter.saveSortedData(sortedData, inputDirectory+"/temp");
+                    std::string tempFilename = sorter.saveSortedData(sortedData, inputDirectory);
 
                     // This part should be synchronized since tempFiles is shared among threads
                     {
@@ -70,6 +72,12 @@ int main(int argc, char* argv[]) {
 
                     currentOffset += currentTaskSize;
                 }
+                }
+                catch (const std::system_error& e) {
+                std::cerr << "Code part: " << 1 << '\n';
+                std::cerr << "Error: " << e.what() << '\n';
+                std::cerr << "Code: " << e.code() << '\n';
+            }
             });
         }
     }
@@ -80,14 +88,43 @@ int main(int argc, char* argv[]) {
 
     ThreadPool mergerThreadPool(std::thread::hardware_concurrency()*2);
 
-    Merger merger;
+    std::atomic<size_t> mergeTaskCounter(0);
+    std::condition_variable mergeCompleted;
+    std::mutex fileMutex;
+    std::mutex dummyMutex;
 
-    for(int i=0;i<std::thread::hardware_concurrency()*2;i++)
-    {
-        mergerThreadPool.enqueue([&](){
-            merger.twoWayMergeThreadSafe(tempFiles, inputDirectory+"/temp");
-        });
+    Merger merger;
+    while (tempFiles.size() > 1) {
+        size_t taskCount = (tempFiles.size() + 1) / 2; // 两个文件一组
+        mergeTaskCounter = taskCount;
+        std::vector<std::string> mergedFiles;
+
+        for (size_t i = 0; i < tempFiles.size(); i += 2) {
+            mergerThreadPool.enqueue([&, i]() {
+                if(i+1==tempFiles.size())
+                {
+                    std::cout << "empty!" << std::endl;
+                }
+                std::string mergedFileName = merger.twoWayMergeThreadSafe(tempFiles[i], i + 1 < tempFiles.size() ? tempFiles[i + 1] : "", inputDirectory);
+                {
+                    std::unique_lock<std::mutex> lock(fileMutex);
+                    mergedFiles.push_back(mergedFileName);
+                }
+                if (--mergeTaskCounter == 0) {
+                    mergeCompleted.notify_one();
+                }
+            });
+        }
+
+        // 等待所有归并任务完成
+        {
+            std::unique_lock<std::mutex> dummyLock(dummyMutex);
+            mergeCompleted.wait(dummyLock, [&]() { return mergeTaskCounter == 0; });
+        }
+
+        tempFiles = mergedFiles; // 为下一轮归并更新文件列表
     }
+
 
     mergerThreadPool.shutdown();
     
@@ -104,27 +141,20 @@ int main(int argc, char* argv[]) {
 
     
 
-        // 打开输出文件并显示前100个数字
-        std::ifstream output(outputFile, std::ios::binary | std::ios::in);
-        if (output) {
-            std::cout << "\nFirst 100 numbers in sorted order:\n";
-            for (int i = 0; i < 100; i++) {
-                int64_t value;
-                if (output.read(reinterpret_cast<char*>(&value), sizeof(int64_t))) {
-                    std::cout << value << " ";
-                }
+    // 打开输出文件并显示前100个数字
+    std::ifstream output(outputFile, std::ios::binary | std::ios::in);
+    if (output) {
+        std::cout << "\nFirst 100 numbers in sorted order:\n";
+        for (int i = 0; i < 100; i++) {
+            int64_t value;
+            if (output.read(reinterpret_cast<char*>(&value), sizeof(int64_t))) {
+                std::cout << value << " ";
             }
-            std::cout << std::endl;
-            output.close();
         }
+        std::cout << std::endl;
+        output.close();
     }
-    catch (const std::system_error& e) {
-        std::cerr << "Error: " << e.what() << '\n';
-        std::cerr << "Code: " << e.code() << '\n';
-    }
-
-
-
+    // std::cout<<"exit"<<std::endl;
     return 0;
 
 }

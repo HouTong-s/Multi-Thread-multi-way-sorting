@@ -5,7 +5,7 @@
 #include <vector>
 #include <queue>
 #include <mutex>
-#include"ThreadPool.h"
+#include <atomic>
 
 class Merger {
 public:
@@ -17,13 +17,11 @@ public:
 
     // 合并所有临时文件到最终的输出文件
     void mergeToFinalOutput(const std::vector<std::string>& tempFiles, const std::string& outputFilename);
-    void twoWayMergeThreadSafe(std::vector<std::string>& tempFiles, const std::string& tempDir);
+    std::string twoWayMergeThreadSafe(const std::string& file1Name, const std::string& file2Name, const std::string& tempDir);
 
 private:
 
-    ThreadPool threadPool;
-
-    int mergeFileCount;  // 用于生成临时归并文件名
+    std::atomic<size_t> mergeFileCount; // 用于生成临时归并文件名
     std::mutex fileMutex;
 
     struct MergeElement {

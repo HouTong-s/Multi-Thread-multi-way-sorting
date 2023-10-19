@@ -1,24 +1,30 @@
 #include "ThreadPool.h"
+#include<iostream>
 
 ThreadPool::ThreadPool(size_t threads) : stop(false) {
+
     for(size_t i = 0; i < threads; ++i) {
-        workers.emplace_back([this] { this->workerFunction(); });
+        workers.emplace_back([this, i] {  // capture i
+            this->workerFunction();
+        });
     }
 }
 
 ThreadPool::~ThreadPool() {
-    stop = true;
-    condition.notify_all();
-    for(std::thread &worker: workers) {
-        worker.join();
-    }
+    // shutdown();
 }
 
 void ThreadPool::shutdown() {
-    stop = true;
+    {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        stop = true;
+    }
     condition.notify_all();
-    for(std::thread &worker: workers) {
-        worker.join();
+
+    for(size_t i = 0; i < workers.size(); ++i) {
+        if (workers[i].joinable()) {
+            workers[i].join();
+        }
     }
 }
 
@@ -37,6 +43,7 @@ void ThreadPool::workerFunction() {
             std::unique_lock<std::mutex> lock(queue_mutex);
             condition.wait(lock, [this]{ return this->stop || !this->tasks.empty(); });
             if(this->stop && this->tasks.empty()) {
+                std::cout<<"thread exited!"<<std::endl;
                 return;
             }
             task = std::move(this->tasks.front());

@@ -1,62 +1,51 @@
 #include "Merger.h"
+#include <iostream>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 
-Merger::Merger() : mergeFileCount(0), threadPool(std::thread::hardware_concurrency() * 2) {}
+Merger::Merger() : mergeFileCount(0) {}
 
-void Merger::twoWayMergeThreadSafe(std::vector<std::string>& tempFiles, const std::string& tempDir) {
-    while (true) {
-        std::string file1Name, file2Name;
-        {
-            std::unique_lock<std::mutex> lock(fileMutex);
-            
-            if (tempFiles.size() <= 1) return; // 终止条件
+std::string Merger::twoWayMergeThreadSafe(const std::string& file1Name, const std::string& file2Name, const std::string& tempDir) {
+    std::string mergedFileName = getNextMergeFileName(tempDir);
 
-            file1Name = tempFiles.front(); 
-            tempFiles.erase(tempFiles.begin());
+    std::ifstream file1(file1Name, std::ios::binary);
+    std::ifstream file2;
+    if (!file2Name.empty()) {
+        file2.open(file2Name, std::ios::binary);
+    }
+    else {
+        std::cout << "file2Name empty" << std::endl;
+    }
+    std::ofstream mergedFile(mergedFileName, std::ios::binary);
 
-            file2Name = tempFiles.back();
-            tempFiles.pop_back();
-        }
+    int64_t value1, value2;
+    bool hasValue1 = bool(file1.read(reinterpret_cast<char*>(&value1), sizeof(int64_t)));
+    bool hasValue2 = file2.is_open() && bool(file2.read(reinterpret_cast<char*>(&value2), sizeof(int64_t)));
 
-        std::string mergedFileName = getNextMergeFileName(tempDir);
-
-        std::ifstream file1(file1Name, std::ios::binary);
-        std::ifstream file2(file2Name, std::ios::binary);
-        std::ofstream mergedFile(mergedFileName, std::ios::binary);
-
-        int64_t value1, value2;
-        bool hasValue1 = bool(file1.read(reinterpret_cast<char*>(&value1), sizeof(int64_t)));
-        bool hasValue2 = bool(file2.read(reinterpret_cast<char*>(&value2), sizeof(int64_t)));
-
-        while (hasValue1 || hasValue2) {
-            if (!hasValue2 || (hasValue1 && value1 <= value2)) {
-                mergedFile.write(reinterpret_cast<char*>(&value1), sizeof(int64_t));
-                hasValue1 = bool(file1.read(reinterpret_cast<char*>(&value1), sizeof(int64_t)));
-            } else {
-                mergedFile.write(reinterpret_cast<char*>(&value2), sizeof(int64_t));
-                hasValue2 = bool(file2.read(reinterpret_cast<char*>(&value2), sizeof(int64_t)));
-            }
-        }
-
-        file1.close();
-        file2.close();
-        mergedFile.close();
-
-        // 删除归并之前的两个文件
-        std::filesystem::remove(file1Name);
-        std::filesystem::remove(file2Name);
-        {
-            std::unique_lock<std::mutex> lock(fileMutex);
-            if (rand() % 2 == 0) { // 随机决定添加到头部还是尾部
-                tempFiles.push_back(mergedFileName);
-            } else {
-                tempFiles.insert(tempFiles.begin(), mergedFileName);
-            }
+    while (hasValue1 || hasValue2) {
+        if (!hasValue2 || (hasValue1 && value1 <= value2)) {
+            mergedFile.write(reinterpret_cast<char*>(&value1), sizeof(int64_t));
+            hasValue1 = bool(file1.read(reinterpret_cast<char*>(&value1), sizeof(int64_t)));
+        } else {
+            mergedFile.write(reinterpret_cast<char*>(&value2), sizeof(int64_t));
+            hasValue2 = bool(file2.read(reinterpret_cast<char*>(&value2), sizeof(int64_t)));
         }
     }
+
+    file1.close();
+    if (file2.is_open()) file2.close();
+    mergedFile.close();
+
+    // 删除归并之前的两个文件
+    std::filesystem::remove(file1Name);
+    if (!file2Name.empty()) {
+        std::filesystem::remove(file2Name);
+    }
+
+    return mergedFileName;
 }
+
 
 
 std::vector<std::string> Merger::twoWayMerge(const std::vector<std::string>& tempFiles, const std::string& tempDir) {
@@ -137,6 +126,8 @@ void Merger::mergeToFinalOutput(const std::vector<std::string>& tempFiles, const
 
 std::string Merger::getNextMergeFileName(const std::string& tempDir) {
     std::ostringstream oss;
-    oss << tempDir << "/merged_" << mergeFileCount++ << ".dat";
+    size_t currentCount = mergeFileCount.fetch_add(1);  // Atomically increase the count
+    oss << tempDir << "/merged_" << currentCount << ".dat";
     return oss.str();
 }
+
