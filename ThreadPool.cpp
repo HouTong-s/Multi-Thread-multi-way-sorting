@@ -7,7 +7,11 @@ ThreadPool::ThreadPool(size_t threads) : stop(false) {
 }
 
 ThreadPool::~ThreadPool() {
-
+    stop = true;
+    condition.notify_all();
+    for(std::thread &worker: workers) {
+        worker.join();
+    }
 }
 
 void ThreadPool::shutdown() {

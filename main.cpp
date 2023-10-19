@@ -10,6 +10,7 @@
 
 
 int main(int argc, char* argv[]) {
+    try {
     if (argc < 3) {
         std::cout << "Usage: " << argv[0] << " <input directory> <output file>" << std::endl;
         return 1;
@@ -56,14 +57,16 @@ int main(int argc, char* argv[]) {
                         break; // No more data to read
                     }
 
-                    std::cout << file << ": Task " << task << " Offset: " << currentOffset << " DataNums:" << data.size() << std::endl;
+                    std::cout << file << ": Task " << task << " Thread id: " << std::this_thread::get_id() << " DataNums:" << data.size() << std::endl;
                     
                     std::vector<int64_t> sortedData = sorter.sortData(data);
-                    std::string tempFilename = sorter.saveSortedData(sortedData, inputDirectory);
+                    std::string tempFilename = sorter.saveSortedData(sortedData, inputDirectory+"/temp");
 
                     // This part should be synchronized since tempFiles is shared among threads
-                    std::unique_lock<std::mutex> lock(tempFilesMutex);
-                    tempFiles.push_back(tempFilename);
+                    {
+                        std::unique_lock<std::mutex> lock(tempFilesMutex);
+                        tempFiles.push_back(tempFilename);
+                    }
 
                     currentOffset += currentTaskSize;
                 }
@@ -75,11 +78,18 @@ int main(int argc, char* argv[]) {
     // 确保所有排序任务完成
     threadPool.shutdown();
 
-    // 归并所有临时文件
+    ThreadPool mergerThreadPool(std::thread::hardware_concurrency()*2);
+
     Merger merger;
-    while (tempFiles.size() > 1) { // 保持归并，直到只剩下一个文件
-        tempFiles = merger.twoWayMerge(tempFiles, inputDirectory);
+
+    for(int i=0;i<std::thread::hardware_concurrency()*2;i++)
+    {
+        mergerThreadPool.enqueue([&](){
+            merger.twoWayMergeThreadSafe(tempFiles, inputDirectory+"/temp");
+        });
     }
+
+    mergerThreadPool.shutdown();
     
 
     if (!tempFiles.empty()) {
@@ -92,21 +102,28 @@ int main(int argc, char* argv[]) {
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
     std::cout << "\nTotal execution time: " << duration << " milliseconds.\n";
 
-    // 打开输出文件并显示前100个数字
-    std::ifstream output(outputFile, std::ios::binary | std::ios::in);
-    if (output) {
-        std::cout << "\nFirst 100 numbers in sorted order:\n";
-        for (int i = 0; i < 100; i++) {
-            int64_t value;
-            if (output.read(reinterpret_cast<char*>(&value), sizeof(int64_t))) {
-                std::cout << value << " ";
+    
+
+        // 打开输出文件并显示前100个数字
+        std::ifstream output(outputFile, std::ios::binary | std::ios::in);
+        if (output) {
+            std::cout << "\nFirst 100 numbers in sorted order:\n";
+            for (int i = 0; i < 100; i++) {
+                int64_t value;
+                if (output.read(reinterpret_cast<char*>(&value), sizeof(int64_t))) {
+                    std::cout << value << " ";
+                }
             }
+            std::cout << std::endl;
+            output.close();
         }
-        std::cout << std::endl;
-        output.close();
+    }
+    catch (const std::system_error& e) {
+        std::cerr << "Error: " << e.what() << '\n';
+        std::cerr << "Code: " << e.code() << '\n';
     }
 
-    
+
 
     return 0;
 
