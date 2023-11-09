@@ -21,9 +21,6 @@ public:
     // 保存临时数据到文件
     void saveTempData(const std::vector<int64_t>& data, const std::string& tempFilename);
 
-    // 合并所有临时文件到最终的输出文件
-    void mergeToFinalOutput(const std::vector<std::string>& tempFiles, const std::string& outputFilename);
-
 private:
     std::string directory;
 };

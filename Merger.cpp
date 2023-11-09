@@ -46,81 +46,73 @@ std::string Merger::twoWayMergeThreadSafe(const std::string& file1Name, const st
     return mergedFileName;
 }
 
+std::string Merger::multiWayMergeThreadSafe(const std::vector<std::string>& fileNames, const std::string& tempDir) {
+    if (fileNames.empty()) {
+        return "";  // 没有要合并的文件
+    }
 
+    // 创建一个用于合并数据的输出文件
+    std::string mergedFileName = getNextMergeFileName(tempDir);
+    std::ofstream mergedFile(mergedFileName, std::ios::binary);
 
-std::vector<std::string> Merger::twoWayMerge(const std::vector<std::string>& tempFiles, const std::string& tempDir) {
-    std::vector<std::string> mergedFiles;
+    // 创建缓存区用于每个文件
+    std::vector<std::ifstream> inputFiles;
+    std::vector<std::vector<int64_t>> fileBuffers;
+    for (const std::string& fileName : fileNames) {
+        inputFiles.emplace_back(fileName, std::ios::binary);
+        fileBuffers.emplace_back(10 * 1024 * 1024 / sizeof(int64_t)); // 10MB缓存区
+    }
 
-    std::mutex mutex; // 用于同步对mergedFiles的访问
-    
-    size_t fileCount = tempFiles.size();
+    // 从每个文件读取初始数据到缓存区
+    for (size_t i = 0; i < fileNames.size(); ++i) {
+        int64_t* bufferData = fileBuffers[i].data();
+        inputFiles[i].read(reinterpret_cast<char*>(bufferData), fileBuffers[i].size() * sizeof(int64_t));
+    }
 
-    for (size_t i = 0; i < fileCount; i += 2) {
-        std::string mergedFileName = getNextMergeFileName(tempDir);
-        mergedFiles.push_back(mergedFileName);
+    // 创建优先队列，用于保存来自每个文件缓存区的当前最小元素
+    std::priority_queue<MergeElement> minHeap;
 
-        std::ifstream file1(tempFiles[i], std::ios::binary);
-        std::ifstream file2((i + 1) < fileCount ? tempFiles[i + 1] : "", std::ios::binary);
-        std::ofstream mergedFile(mergedFileName, std::ios::binary);
+    for (size_t i = 0; i < fileNames.size(); ++i) {
+        if (!fileBuffers[i].empty()) {
+            minHeap.push({fileBuffers[i][0], i});
+        }
+    }
 
-        int64_t value1, value2;
-        bool hasValue1 = bool(file1.read(reinterpret_cast<char*>(&value1), sizeof(int64_t)));
-        bool hasValue2 = bool(file2.read(reinterpret_cast<char*>(&value2), sizeof(int64_t)));
+    while (!minHeap.empty()) {
+        // 从优先队列中获取最小的元素
+        MergeElement minElement = minHeap.top();
+        minHeap.pop();
 
-        while (hasValue1 || hasValue2) {
-            if (!hasValue2 || (hasValue1 && value1 <= value2)) {
-                mergedFile.write(reinterpret_cast<char*>(&value1), sizeof(int64_t));
-                hasValue1 = bool(file1.read(reinterpret_cast<char*>(&value1), sizeof(int64_t)));
+        // 将最小的元素写入合并文件
+        mergedFile.write(reinterpret_cast<char*>(&minElement.value), sizeof(int64_t));
+
+        // 从提供最小元素的文件缓存区中读取下一个元素
+        size_t fileIndex = minElement.fileIndex;
+        std::vector<int64_t>& buffer = fileBuffers[fileIndex];
+
+        if (!buffer.empty()) {
+            // 移除已使用的元素
+            buffer.erase(buffer.begin());
+
+            // 如果缓存区不为空，将下一个元素添加到优先队列
+            if (!buffer.empty()) {
+                minHeap.push(MergeElement{buffer[0], fileIndex});
             } else {
-                mergedFile.write(reinterpret_cast<char*>(&value2), sizeof(int64_t));
-                hasValue2 = bool(file2.read(reinterpret_cast<char*>(&value2), sizeof(int64_t)));
+                // 缓存区已空，从文件读取下一个数据块到缓存区
+                int64_t* bufferData = buffer.data();
+                inputFiles[fileIndex].read(reinterpret_cast<char*>(bufferData), buffer.size() * sizeof(int64_t));
             }
         }
-
-        file1.close();
-        file2.close();
-        mergedFile.close();
-
-
-        std::filesystem::remove(tempFiles[i]);
-
-        if ((i + 1) < fileCount) {
-            std::filesystem::remove(tempFiles[i + 1]);
-        }
     }
 
-    return mergedFiles;
-}
-
-
-void Merger::mergeToFinalOutput(const std::vector<std::string>& tempFiles, const std::string& outputFilename) {
-    std::ofstream outputFile(outputFilename, std::ios::binary);
-    std::priority_queue<MergeElement> pq;
-    std::vector<std::ifstream> files(tempFiles.size());
-
-    for (size_t i = 0; i < tempFiles.size(); ++i) {
-        files[i].open(tempFiles[i], std::ios::binary);
-        MergeElement elem;
-        if (files[i].read(reinterpret_cast<char*>(&elem.value), sizeof(int64_t))) {
-            elem.fileIndex = i;
-            pq.push(elem);
-        }
+    // 删除输入文件
+    for (const std::string& fileName : fileNames) {
+        std::filesystem::remove(fileName);
     }
 
-    while (!pq.empty()) {
-        MergeElement elem = pq.top();
-        pq.pop();
-        outputFile.write(reinterpret_cast<char*>(&elem.value), sizeof(int64_t));
+    mergedFile.close();
 
-        if (files[elem.fileIndex].read(reinterpret_cast<char*>(&elem.value), sizeof(int64_t))) {
-            pq.push(elem);
-        }
-    }
-
-    for (auto& file : files) {
-        file.close();
-    }
-    outputFile.close();
+    return mergedFileName;
 }
 
 

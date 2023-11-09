@@ -56,9 +56,3 @@ void FileHandler::saveTempData(const std::vector<int64_t>& data, const std::stri
     }
 }
 
-void FileHandler::mergeToFinalOutput(const std::vector<std::string>& tempFiles, const std::string& outputFilename) {
-    // ... 
-    // 此处应该包含归并多个临时文件的逻辑，但它可能会很长并且与Merger的工作重叠。
-    // 如果您确实需要这部分的代码，可以单独询问。
-}
-
